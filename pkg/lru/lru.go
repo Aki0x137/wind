@@ -35,21 +35,18 @@ type LRU struct {
 
 
 func NewLRU(capacity int) (lru *LRU) {
+	head := &Node{}
+	tail := &Node{}
+	head.Next = tail
+	tail.Prev = head
+
 	lru = &LRU{
 		capacity: capacity,
 		cache: make(map[string]*Node),
 		mutex: &sync.RWMutex{},
-		head: &Node{},
-		tail: &Node{},
+		head: head,
+		tail: tail,
 	}
-
-	head := lru.head
-	tail := lru.tail
-
-	head.Next = tail
-	tail.Prev = head
-	lru.head = head
-	lru.tail = tail
 
 	return
 }
@@ -92,9 +89,10 @@ func (lru *LRU) Put(key string, val any) {
 
 // insert at front/right of Linked List
 func (lru *LRU) insert(node *Node) {
-	node.Next = lru.head.Next
-	lru.head.Next.Prev = node
+	first := lru.head.Next
 
+	node.Next = first
+	first.Prev = node
 
 	lru.head.Next = node
 	node.Prev = lru.head

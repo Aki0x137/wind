@@ -34,19 +34,24 @@ type LRU struct {
 }
 
 
-func (lru *LRU) Init(capacity int) {
-	lru.capacity = capacity
-	lru.cache = make(map[string]*Node)
-	lru.mutex = &sync.RWMutex{}
+func NewLRU(capacity int) (lru *LRU) {
+	lru = &LRU{
+		capacity: capacity,
+		cache: make(map[string]*Node),
+		mutex: &sync.RWMutex{},
+		head: &Node{},
+		tail: &Node{},
+	}
 
-	head := &Node{}
-	tail := &Node{}
+	head := lru.head
+	tail := lru.tail
 
 	head.Next = tail
 	tail.Prev = head
-
 	lru.head = head
 	lru.tail = tail
+
+	return
 }
 
 

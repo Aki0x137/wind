@@ -69,22 +69,19 @@ func (lru *LRU) Put(key string, val any) {
     defer lru.mutex.Unlock()
 
 	if node, ok := lru.cache[key]; ok {
-		node.Value = val
-
 		lru.delete(node)
-		lru.insert(node)
-	} else {
-		node := newNode(key, val)
-
-		lru.cache[key] = node
-		lru.insert(node)
+		delete(lru.cache, key)
 	}
+
+	node := newNode(key, val)
+	lru.cache[key] = node
+	lru.insert(node)
 
 	if len(lru.cache) > lru.capacity {
 		leastRecentNode := lru.tail.Prev
 		
 		lru.delete(leastRecentNode)
-		delete(lru.cache, key)
+		delete(lru.cache, leastRecentNode.Key)
 	}
 }
 

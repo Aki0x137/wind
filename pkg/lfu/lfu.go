@@ -11,6 +11,8 @@ import (
 type Node struct { 
 	Key string
 	Value any
+	Freq int
+
 	Prev *Node
 	Next *Node
 }
@@ -19,87 +21,134 @@ func NewNode(key string, val any) *Node {
 	node := &Node{}
 	node.Key = key
 	node.Value = val
+	node.Freq = 1
 
 	return node
 }
+
+type FreqList struct {
+	head *Node
+	tail *Node
+}
+
+func NewFreqList() (fl * FreqList) {
+	head := &Node{}
+	tail := &Node{}
+	head.Next = tail
+	tail.Prev = head
+
+	fl = &FreqList{
+		head: head,
+		tail:tail,
+	}
+
+	return
+}
+
+// insert at front/right of Linked List
+func (fl *FreqList) insert(node *Node) {
+	first := fl.head.Next
+
+	node.Next = first
+	first.Prev = node
+
+	fl.head.Next = node
+	node.Prev = fl.head
+}
+
+// Remove from Linked List
+func (fl *FreqList) delete(node *Node) {
+	node.Prev.Next = node.Next
+	node.Next.Prev = node.Prev
+}
+
+func (fl *FreqList) hasNodes() bool {
+	if fl.head.Next != fl.tail {
+		return true
+	} else {
+		return false
+	}
+}
+
 
 type LFU struct {
 	mutex *sync.RWMutex
 
 	capacity int
-	head *Node
-	tail *Node
+	leastFreq int
+	freqMap map[int]*FreqList
 
 	cache map[string]*Node
 }
 
+func NewLFU(capacity int) (lfu *LFU) {
+	lfu = &LFU{
+		capacity: capacity,
+		leastFreq: 1,
+		cache: make(map[string]*Node),
+		freqMap: make(map[int]*FreqList),
+		mutex: &sync.RWMutex{},
+	}
 
-func (lfu *LFU) init(capaity int) {
-	lfu.capacity = capaity
-	lfu.cache = make(map[string]*Node)
-	lfu.mutex = &sync.RWMutex{}
-
-	head := &Node{}
-	tail := &Node{}
-
-
-	head.Next = tail
-	tail.Prev = head
-
-	lfu.head = head
-	lfu.tail = tail
+	return
 }
-
 
 func (lfu *LFU) Get(key string) any {
 	lfu.mutex.RLock()
 	defer lfu.mutex.RUnlock()
 
-	if lfu.cache[key] != nil {
-		node := lfu.cache[key]
-		lfu.delete(node)
-		lfu.insert(node)
-
-		return node.Value
+	if node, ok := lfu.cache[key]; ok {
+		node.Freq++
+		lfu.rebalance(node)
 	}
 
 	return nil
 }
 
 func (lfu *LFU) Put(key string, val any) {
-	if lfu.cache[key] != nil {
-		node := lfu.cache[key]
+	lfu.mutex.Lock()
+    defer lfu.mutex.Unlock()
+
+	if node, ok := lfu.cache[key]; ok {
 		node.Value = val
-
-		lfu.delete(node)
-		lfu.insert(node)
+		node.Freq++
+		lfu.rebalance(node)
 	} else {
-		node := NewNode(key, val)
+		if len(lfu.cache) == lfu.capacity {
+			fl := lfu.freqMap[lfu.leastFreq]
+			leastRecentNode := fl.tail.Prev
+			delete(lfu.cache, leastRecentNode.Key)
+			fl.delete(leastRecentNode)
+			if !fl.hasNodes() {
+				delete(lfu.freqMap, lfu.leastFreq)
+			}
+		}
+	
+		node := &Node{Key: key, Value: val}
+		lfu.rebalance(node)
 
-		lfu.cache[key] = node
-		lfu.insert(node)
-	}
-
-	if len(lfu.cache) > lfu.capacity {
-		leastRecentNode := lfu.tail.Prev
-		
-		lfu.delete(leastRecentNode)
-		delete(lfu.cache, key)
-	}
+	}	
 }
 
-// insert at front/right of Linked List
-func (lfu *LFU) insert(node *Node) {
-	node.Next = lfu.head.Next
-	lfu.head.Next.Prev = node
+func (lfu *LFU) rebalance(node *Node) {
+	freq := node.Freq
 
+	if fl, ok := lfu.freqMap[freq]; ok {
+		fl.insert(node)
+	} else {
+		fl = NewFreqList()
+		fl.insert(node)
+	}
 
-	lfu.head.Next = node
-	node.Prev = lfu.head
-}
+	if prevFL, ok := lfu.freqMap[freq - 1]; ok {
+		prevFL.delete(node)
 
-// Remove from Linked List
-func (lfu *LFU) delete(node *Node) {
-	node.Prev.Next = node.Next
-	node.Next.Prev = node.Prev
+		if !prevFL.hasNodes() {
+			delete(lfu.freqMap, freq - 1)
+	
+			if lfu.leastFreq == freq - 1 {
+				lfu.leastFreq++
+			}
+		}
+	}
 }

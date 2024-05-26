@@ -84,7 +84,7 @@ type LFU struct {
 func NewLFU(capacity int) (lfu *LFU) {
 	lfu = &LFU{
 		capacity: capacity,
-		leastFreq: 1,
+		leastFreq: 0,
 		cache: make(map[string]*Node),
 		freqMap: make(map[int]*FreqList),
 		mutex: &sync.RWMutex{},
@@ -98,57 +98,57 @@ func (lfu *LFU) Get(key string) any {
 	defer lfu.mutex.RUnlock()
 
 	if node, ok := lfu.cache[key]; ok {
-		node.Freq++
 		lfu.rebalance(node)
+		return node.Value
 	}
 
 	return nil
 }
 
 func (lfu *LFU) Put(key string, val any) {
+	if lfu.capacity == 0 {
+		return;
+	}
 	lfu.mutex.Lock()
     defer lfu.mutex.Unlock()
 
 	if node, ok := lfu.cache[key]; ok {
 		node.Value = val
-		node.Freq++
 		lfu.rebalance(node)
 	} else {
-		if len(lfu.cache) == lfu.capacity {
-			fl := lfu.freqMap[lfu.leastFreq]
-			leastRecentNode := fl.tail.Prev
-			delete(lfu.cache, leastRecentNode.Key)
-			fl.delete(leastRecentNode)
-			if !fl.hasNodes() {
-				delete(lfu.freqMap, lfu.leastFreq)
-			}
-		}
-	
-		node := &Node{Key: key, Value: val}
-		lfu.rebalance(node)
+		node := NewNode(key, val)
 
-	}	
+		if lfu.capacity == len(lfu.cache) {
+			leastFrequentFL := lfu.freqMap[lfu.leastFreq]
+			leastRecentNode := leastFrequentFL.tail.Prev
+			leastFrequentFL.delete(leastRecentNode)
+			delete(lfu.cache, leastRecentNode.Key)
+		}
+
+		lfu.leastFreq = 1
+		lfu.updateFrequencyList(node)
+		lfu.cache[key] = node
+	}
 }
 
 func (lfu *LFU) rebalance(node *Node) {
-	freq := node.Freq
+	currentFL := lfu.freqMap[node.Freq]
+	currentFL.delete(node)
+	if lfu.leastFreq == node.Freq && !currentFL.hasNodes() {
+		lfu.leastFreq++
+		delete(lfu.freqMap, node.Freq)
+	}
 
-	if fl, ok := lfu.freqMap[freq]; ok {
+	node.Freq++
+	lfu.updateFrequencyList(node)
+}
+
+func (lfu *LFU) updateFrequencyList(node *Node) {
+	if fl, ok := lfu.freqMap[node.Freq]; ok {
 		fl.insert(node)
 	} else {
 		fl = NewFreqList()
 		fl.insert(node)
-	}
-
-	if prevFL, ok := lfu.freqMap[freq - 1]; ok {
-		prevFL.delete(node)
-
-		if !prevFL.hasNodes() {
-			delete(lfu.freqMap, freq - 1)
-	
-			if lfu.leastFreq == freq - 1 {
-				lfu.leastFreq++
-			}
-		}
+		lfu.freqMap[node.Freq] = fl
 	}
 }

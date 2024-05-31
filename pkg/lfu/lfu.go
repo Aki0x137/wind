@@ -17,7 +17,7 @@ type Node struct {
 	Next *Node
 }
 
-func NewNode(key string, val any) *Node {
+func newNode(key string, val any) *Node {
 	node := &Node{}
 	node.Key = key
 	node.Value = val
@@ -116,7 +116,7 @@ func (lfu *LFU) Put(key string, val any) {
 		node.Value = val
 		lfu.rebalance(node)
 	} else {
-		node := NewNode(key, val)
+		node := newNode(key, val)
 
 		if lfu.capacity == len(lfu.cache) {
 			leastFrequentFL := lfu.freqMap[lfu.leastFreq]

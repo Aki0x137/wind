@@ -2,6 +2,7 @@ package dlfu
 
 import (
 	"context"
+	"sort"
 	"time"
 
 	"github.com/puzpuzpuz/xsync/v3"
@@ -32,7 +33,7 @@ type DLFUCache[V any] struct {
 	increment     types.Float64
 	expiryEnabled bool
 
-	cache *xsync.MapOf[string, Item[V]]
+	cache *xsync.MapOf[string, *Item[V]]
 }
 
 func NewDLFUCache[V any](config config.DLFUConfig) *DLFUCache[V] {
@@ -40,7 +41,7 @@ func NewDLFUCache[V any](config config.DLFUConfig) *DLFUCache[V] {
 		capacity:      config.Capacity,
 		weight:        config.Weight,
 		expiryEnabled: config.ExpiryEnabled,
-		cache:         xsync.NewMapOf[string, Item[V]](),
+		cache:         xsync.NewMapOf[string, *Item[V]](),
 	}
 
 	cache.increment.Store(1.0) // Initial value
@@ -52,6 +53,8 @@ func NewDLFUCache[V any](config config.DLFUConfig) *DLFUCache[V] {
 		cache.decay = (p + 1.0) / p
 	}
 
+	// TODO: set timer for trimmer call using config.TrimInterval
+
 	return cache
 }
 
@@ -59,23 +62,31 @@ func (c *DLFUCache[V]) Set(items map[string]V, expiry time.Duration) {
 
 	expiresAt := time.Now().Add(expiry)
 	for key, val := range items {
+		if item, ok := c.cache.Load(key); ok {
+			item.value = val
+			item.expiry = time.Now().Add(expiry)
+			continue
+		}
 		item := &Item[V]{
 			key:    key,
 			value:  val,
 			score:  c.increment,
 			expiry: expiresAt,
 		}
-		c.cache.Store(key, *item)
+		c.cache.Store(key, item)
 	}
 }
 
 // Get returns map of keys for which values are found in Cache and slice of keys for which value is not found in cache
-func (c *DLFUCache[V]) Get(keys []string) (map[string]V, []string) {
+func (c *DLFUCache[V]) Get(ctx context.Context, keys []string) (map[string]V, []string) {
 	result := make(map[string]V)
 	missingKeys := make([]string, 0)
 	increment := c.increment.Load()
 
-	for _, key := range keys {
+	for i, key := range keys {
+		if ctx.Err() != nil {
+			return result, append(keys[i:], missingKeys...)
+		}
 		if item, ok := c.cache.Load(key); ok && !item.isExpired() {
 			result[key] = item.value
 			item.score.Add(increment)
@@ -103,5 +114,19 @@ func (c *DLFUCache[V]) trimmer(ctx context.Context) {
 }
 
 func (c *DLFUCache[V]) trim() {
+	size := c.cache.Size()
+	if size <= c.capacity {
+		return
+	}
 
+	items := make([]*Item[V], 0, size)
+	c.cache.Range(func(key string, value *Item[V]) bool {
+		items = append(items, value)
+		return true
+	})
+	sort.Sort(items)
+
+	for i := 0; i < len(items)-c.capacity; i++ {
+		c.cache.Delete(items[i].key)
+	}
 }

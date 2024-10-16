@@ -18,6 +18,20 @@ type Item[V any] struct {
 	expiry time.Time
 }
 
+type ItemSlice[V any] []*Item[V]
+
+func (s ItemSlice[V]) Len() int {
+	return len(s)
+}
+
+func (s ItemSlice[V]) Less(i, j int) bool {
+	return s[i].score.Load() < s[j].score.Load()
+}
+
+func (s ItemSlice[V]) Swap(i, j int) {
+	s[i], s[j] = s[j], s[i]
+}
+
 func (i *Item[V]) isExpired() bool {
 	return time.Now().After(i.expiry)
 }
@@ -36,7 +50,7 @@ type DLFUCache[V any] struct {
 	cache *xsync.MapOf[string, *Item[V]]
 }
 
-func NewDLFUCache[V any](config config.DLFUConfig) *DLFUCache[V] {
+func NewDLFUCache[V any](ctx context.Context, config config.DLFUConfig) *DLFUCache[V] {
 	cache := &DLFUCache[V]{
 		capacity:      config.Capacity,
 		weight:        config.Weight,
@@ -53,12 +67,12 @@ func NewDLFUCache[V any](config config.DLFUConfig) *DLFUCache[V] {
 		cache.decay = (p + 1.0) / p
 	}
 
-	// TODO: set timer for trimmer call using config.TrimInterval
+	go cache.trimmer(ctx, config.TrimInterval)
 
 	return cache
 }
 
-func (c *DLFUCache[V]) Set(items map[string]V, expiry time.Duration) {
+func (c *DLFUCache[V]) Set(ctx context.Context, items map[string]V, expiry time.Duration) {
 
 	expiresAt := time.Now().Add(expiry)
 	for key, val := range items {
@@ -99,12 +113,12 @@ func (c *DLFUCache[V]) Get(ctx context.Context, keys []string) (map[string]V, []
 	return result, missingKeys
 }
 
-func (c *DLFUCache[V]) trimmer(ctx context.Context) {
+func (c *DLFUCache[V]) trimmer(ctx context.Context, trimInterval time.Duration) {
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(250 * time.Millisecond):
+		case <-time.After(trimInterval):
 			if ctx.Err() != nil {
 				return
 			}
@@ -124,7 +138,7 @@ func (c *DLFUCache[V]) trim() {
 		items = append(items, value)
 		return true
 	})
-	sort.Sort(items)
+	sort.Sort(ItemSlice[V](items))
 
 	for i := 0; i < len(items)-c.capacity; i++ {
 		c.cache.Delete(items[i].key)
